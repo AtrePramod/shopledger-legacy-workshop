@@ -78,31 +78,62 @@ test('settlement rejects zero, negative, and unknown customer', function () {
   assert.equal(ledger.recordSettlement(customersDb(), 99, 10).ok, false);
 });
 
-// ---------- CURRENT BEHAVIOUR (looks wrong; pinned so we notice when it changes) ----------
+// ---------- Formerly CURRENT BEHAVIOUR: updated after the Ticket 3 fix ----------
 
-test('CURRENT BEHAVIOUR: "newest first" sorts DD/MM/YYYY as text, so #1004 and #1001 come before #1008', function () {
-  assert.deepEqual(ids(orders.list(ordersDb(), {})), [1004, 1001, 1006, 1008, 1003, 1002, 1007, 1005]);
+test('UPDATED (was CURRENT BEHAVIOUR): "newest first" puts #1008 (15/03/2022) on top and #1001 last', function () {
+  var r = ids(orders.list(ordersDb(), {}));
+  assert.equal(r[0], 1008);
+  assert.equal(r[r.length - 1], 1001);
 });
 
-test('CURRENT BEHAVIOUR: January 2022 date filter returns every order', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): January 2022 date filter returns only January orders', function () {
   var r = orders.list(ordersDb(), { from: '2022-01-01', to: '2022-01-31' });
-  assert.equal(r.length, 8);
+  assert.equal(r.length, 3);
 });
 
-test('CURRENT BEHAVIOUR: December 2021 date filter returns every order', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): December 2021 date filter returns only #1001', function () {
   var r = orders.list(ordersDb(), { from: '2021-12-01', to: '2021-12-31' });
-  assert.equal(r.length, 8);
+  assert.equal(r.length, 1);
 });
 
-test('CURRENT BEHAVIOUR: ₹500 settlement sent as text makes Total Settled "1200500"', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): ₹500 settlement sent as text makes Total Settled 1700', function () {
   var db = customersDb();
   var r = ledger.recordSettlement(db, '1', '500', 'cash', '');
-  assert.equal(r.customer.totalSettled, '1200500');
-  assert.equal(r.customer.balance, -1198067.99);
+  assert.equal(r.customer.totalSettled, 1700);
+  assert.equal(r.customer.balance, 732.01);
 });
 
-test('CURRENT BEHAVIOUR: non-numeric settlement amount "abc" is accepted', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): non-numeric settlement amount "abc" is rejected', function () {
   var r = ledger.recordSettlement(customersDb(), 1, 'abc', 'cash', '');
+  assert.equal(r.ok, false);
+});
+
+// ---------- CORRECT BEHAVIOUR (Ticket 3) ----------
+
+test('order history is sorted newest first by real date', function () {
+  assert.deepEqual(ids(orders.list(ordersDb(), {})), [1008, 1007, 1006, 1005, 1004, 1003, 1002, 1001]);
+});
+
+test('date filter returns only orders inside the range (inclusive)', function () {
+  assert.deepEqual(ids(orders.list(ordersDb(), { from: '2022-01-01', to: '2022-01-31' })), [1004, 1003, 1002]);
+  assert.deepEqual(ids(orders.list(ordersDb(), { from: '2021-12-01', to: '2021-12-31' })), [1001]);
+  assert.deepEqual(ids(orders.list(ordersDb(), { from: '2022-03-04' })), [1008, 1007]);
+  assert.deepEqual(ids(orders.list(ordersDb(), { to: '2021-12-28' })), [1001]);
+});
+
+test('₹500 settlement sent as text adds 500 to Total Settled', function () {
+  var db = customersDb();
+  var r = ledger.recordSettlement(db, '1', '500', 'cash', '');
   assert.equal(r.ok, true);
-  assert.equal(r.customer.totalSettled, '1200abc');
+  assert.equal(r.customer.totalSettled, 1700);
+  assert.equal(r.customer.balance, 732.01);
+  assert.equal(db.settlements[0].amount, 500);
+});
+
+test('non-numeric settlement amount is rejected and nothing changes', function () {
+  var db = customersDb();
+  var r = ledger.recordSettlement(db, 1, 'abc', 'cash', '');
+  assert.equal(r.ok, false);
+  assert.equal(db.customers[0].totalSettled, 1200);
+  assert.equal(db.settlements.length, 0);
 });
