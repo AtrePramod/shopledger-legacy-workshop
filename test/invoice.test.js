@@ -107,62 +107,82 @@ test('render() escapes HTML in the customer name', function () {
   assert.match(html, /&lt;script&gt;/);
 });
 
-// ---------- CURRENT BEHAVIOUR (looks wrong; pinned so we notice when it changes) ----------
+// ---------- Formerly CURRENT BEHAVIOUR: updated after the Ticket 1 fix ----------
 
-test('CURRENT BEHAVIOUR: invoice ignores HSN slabs and taxes 5%/18% mix (#1001) at 18%', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): #1001 uses HSN slabs 18% tea / 5% dal', function () {
   var inv = invoice.computeInvoiceFigures(order1001());
-  assert.deepEqual(inv.rows.map(function (r) { return r.gstPercent; }), [18, 18]);
-  assert.equal(inv.tax, 109.8);    // ledger billed 66.90
-  assert.equal(inv.total, 719.8);  // ledger billed 676.90
+  assert.deepEqual(inv.rows.map(function (r) { return r.gstPercent; }), [18, 5]);
+  assert.equal(inv.tax, 66.9);
+  assert.equal(inv.total, 676.9);
 });
 
-test('CURRENT BEHAVIOUR: #1002 SAVE10 invoice shows 1083.24 (183.60 GST) instead of billed 963.90', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): #1002 SAVE10 invoice shows billed 963.90 (45.90 GST)', function () {
   var inv = invoice.computeInvoiceFigures(order1002());
-  assert.equal(inv.tax, 183.6);
-  assert.equal(inv.discount, 120.36); // 10% of (subtotal + tax), not of subtotal
-  assert.equal(inv.total, 1083.24);
+  assert.equal(inv.tax, 45.9);
+  assert.equal(inv.discount, 102); // 10% of subtotal
+  assert.equal(inv.total, 963.9);
 });
 
-test('CURRENT BEHAVIOUR: #1004 SAVE10 ignores the 150 maxDiscount cap', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): #1004 SAVE10 respects the 150 maxDiscount cap', function () {
   var inv = invoice.computeInvoiceFigures(order1004());
-  assert.equal(inv.discount, 264.32); // cap is 150
-  assert.equal(inv.tax, 403.2);
-  assert.equal(inv.total, 2378.88);   // ledger billed 2194.50
+  assert.equal(inv.discount, 150);
+  assert.equal(inv.tax, 104.5);
+  assert.equal(inv.total, 2194.5);
 });
 
-test('CURRENT BEHAVIOUR: flat coupon (#1003) is subtracted after tax at 18%', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): flat coupon (#1003) is applied before tax, per-slab GST', function () {
   var inv = invoice.computeInvoiceFigures(order1003());
   assert.equal(inv.discount, 50);
-  assert.equal(inv.tax, 72);    // ledger billed 49.35
-  assert.equal(inv.total, 422); // ledger billed 399.35
+  assert.equal(inv.tax, 49.35);
+  assert.equal(inv.total, 399.35);
 });
 
-test('CURRENT BEHAVIOUR: non-coupon 12%/5% order (#1007) taxed at 18%', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): non-coupon 12%/5% order (#1007) taxed per slab', function () {
   var inv = invoice.computeInvoiceFigures(order1007());
-  assert.equal(inv.tax, 230.4);   // ledger billed 127.00
-  assert.equal(inv.total, 1510.4); // ledger billed 1407.00
+  assert.equal(inv.tax, 127);
+  assert.equal(inv.total, 1407);
 });
 
-test('CURRENT BEHAVIOUR: coupon below minOrder is still applied on the invoice', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): coupon below minOrder is not applied on the invoice', function () {
   var o = order1008();
   o.items = [{ id: 8, sku: 'BEV-001', name: 'Chai', hsn: '0902', price: 100, qty: 1 }];
   o.coupon = 'SAVE10'; // minOrder 500
   var inv = invoice.computeInvoiceFigures(o);
-  assert.equal(inv.discount, 11.8);
+  assert.equal(inv.discount, 0);
 });
 
-test('CURRENT BEHAVIOUR: render() shows a reconciliation warning for #1002', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): render() shows no reconciliation warning for #1002', function () {
   var html = invoice.render(order1002());
-  assert.match(html, /Accountant Reconciliation Notice/);
+  assert.doesNotMatch(html, /Accountant Reconciliation Notice/);
+  assert.match(html, /963\.90/);
 });
 
-test('CURRENT BEHAVIOUR: GST reconciliation flags every sample order except #1008 (in-memory db)', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): GST reconciliation flags no sample orders (in-memory db)', function () {
   var db = { orders: [order1001(), order1002(), order1003(), order1004(), order1007(), order1008()] };
   var recon = reports.getGstReconciliation(db);
   assert.equal(recon.totalChecked, 6);
-  assert.equal(recon.mismatchCount, 5);
-  assert.deepEqual(
-    recon.rows.filter(function (r) { return r.matched; }).map(function (r) { return r.orderId; }),
-    [1008]
-  );
+  assert.equal(recon.mismatchCount, 0);
+});
+
+// ---------- CORRECT BEHAVIOUR (Ticket 1): invoice must match what the customer was billed ----------
+
+[order1001, order1002, order1003, order1004, order1007, order1008].forEach(function (make) {
+  var o = make();
+  test('invoice for #' + o.id + ' matches the billed ledger figures', function () {
+    var inv = invoice.computeInvoiceFigures(o);
+    assert.equal(inv.subtotal, o.subtotal);
+    assert.equal(inv.discount, o.discount);
+    assert.equal(inv.tax, o.tax);
+    assert.equal(inv.total, o.total);
+    assert.equal(Math.round((inv.cgst + inv.sgst) * 100) / 100, o.tax);
+  });
+});
+
+test('invoice rows use the HSN slab rate (#1007: 12% ghee, 5% oil)', function () {
+  var inv = invoice.computeInvoiceFigures(order1007());
+  assert.deepEqual(inv.rows.map(function (r) { return r.gstPercent; }), [12, 5]);
+});
+
+test('SAVE10 discount on the invoice respects the 150 cap (#1004)', function () {
+  assert.equal(invoice.computeInvoiceFigures(order1004()).discount, 150);
 });
