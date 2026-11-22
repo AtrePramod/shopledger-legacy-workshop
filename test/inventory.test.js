@@ -74,32 +74,58 @@ test('cancel() marks the order cancelled and reverses the khata debit', function
   assert.equal(orders.cancel(db, 1007).ok, false);
 });
 
-// ---------- CURRENT BEHAVIOUR (looks wrong; pinned so we notice when it changes) ----------
+// ---------- Formerly CURRENT BEHAVIOUR: updated after the Ticket 2 fix ----------
 
-test('CURRENT BEHAVIOUR: cannot sell the last sellable ghee jar (DRY-001, 1 sellable)', function () {
-  var r = inventory.check(products(), [{ id: 6, qty: 1 }]);
-  assert.equal(r.ok, false);
-  assert.match(r.msg, /out of stock \(1 sellable available\)/);
+test('UPDATED (was CURRENT BEHAVIOUR): can sell the last sellable ghee jar (DRY-001, 1 sellable)', function () {
+  assert.deepEqual(inventory.check(products(), [{ id: 6, qty: 1 }]), { ok: true });
 });
 
-test('CURRENT BEHAVIOUR: cannot sell the last sellable chilli packet (SPC-001, physical 4, reserved 3)', function () {
-  assert.equal(inventory.check(products(), [{ id: 11, qty: 1 }]).ok, false);
+test('UPDATED (was CURRENT BEHAVIOUR): can sell the last sellable chilli packet (SPC-001, physical 4, reserved 3)', function () {
+  assert.deepEqual(inventory.check(products(), [{ id: 11, qty: 1 }]), { ok: true });
 });
 
-test('CURRENT BEHAVIOUR: buying exactly the sellable stock of any SKU fails', function () {
-  assert.equal(inventory.check(products(), [{ id: 1, qty: 16 }]).ok, false);
+test('UPDATED (was CURRENT BEHAVIOUR): buying exactly the sellable stock of a SKU succeeds', function () {
+  assert.deepEqual(inventory.check(products(), [{ id: 1, qty: 16 }]), { ok: true });
 });
 
-test('CURRENT BEHAVIOUR: cancelling pending #1007 does not return items to stock', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): cancelling pending #1007 returns items to stock', function () {
   var db = dbWithPendingOrder();
   orders.cancel(db, 1007, 'test');
-  assert.equal(db.products[2].stock, 3); // ghee stays 3 (should be 5)
-  assert.equal(db.products[1].stock, 22); // oil stays 22 (should be 24)
+  assert.equal(db.products[2].stock, 5);
+  assert.equal(db.products[1].stock, 24);
 });
 
-test('CURRENT BEHAVIOUR: release() looks up items by productId, so order lines are ignored', function () {
+test('UPDATED (was CURRENT BEHAVIOUR): release() matches order lines by id and restores physical stock', function () {
   var p = products();
   inventory.release(p, [{ id: 4, qty: 2 }]);
-  assert.equal(p[1].stock, 22);
+  assert.equal(p[1].stock, 24);
   assert.equal(p[1].reserved, 4);
+});
+
+// ---------- CORRECT BEHAVIOUR (Ticket 2) ----------
+
+test('can sell the last sellable unit (DRY-001 and SPC-001)', function () {
+  assert.deepEqual(inventory.check(products(), [{ id: 6, qty: 1 }]), { ok: true });
+  assert.deepEqual(inventory.check(products(), [{ id: 11, qty: 1 }]), { ok: true });
+});
+
+test('can buy exactly the sellable stock of a SKU, but not one more', function () {
+  assert.deepEqual(inventory.check(products(), [{ id: 1, qty: 16 }]), { ok: true });
+  assert.equal(inventory.check(products(), [{ id: 11, qty: 2 }]).ok, false);
+});
+
+test('cancelling pending #1007 returns its items to stock', function () {
+  var db = dbWithPendingOrder();
+  orders.cancel(db, 1007, 'test');
+  assert.equal(db.products[2].stock, 5);  // ghee 3 + 2
+  assert.equal(db.products[1].stock, 24); // oil 22 + 2
+  assert.equal(db.products[1].reserved, 4); // wholesale holds untouched
+});
+
+test('sell then cancel puts stock back where it started', function () {
+  var p = products();
+  var items = [{ id: 6, qty: 1 }, { id: 1, qty: 3 }];
+  inventory.reserve(p, items);
+  inventory.release(p, items);
+  assert.deepEqual(p, products());
 });
